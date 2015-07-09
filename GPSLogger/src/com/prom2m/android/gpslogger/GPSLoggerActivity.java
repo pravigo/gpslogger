@@ -55,6 +55,8 @@ public class GPSLoggerActivity extends Activity {
         button.setOnClickListener(mStopListener);
         button = (Button)findViewById(R.id.ButtonExport);
 		button.setOnClickListener(mExportListener);
+        button = (Button)findViewById(R.id.ButtonCsvExport);
+		button.setOnClickListener(mCsvExportListener);
 		RadioButton ground = (RadioButton)findViewById(R.id.RadioGround);
 		ground.setChecked(true);
 		initTripName();
@@ -176,6 +178,12 @@ public class GPSLoggerActivity extends Activity {
     		doExport();
     	}
     };
+    
+    private OnClickListener mCsvExportListener = new OnClickListener() {
+    	public void onClick(View v) {
+    		doCsvExport();
+    	}
+    };
     	
 	private void doExport() {
 		// export the db contents to a kml file
@@ -248,6 +256,79 @@ public class GPSLoggerActivity extends Activity {
 		}
 	}
 
+	private void doCsvExport() {
+		// export the db contents to a CSV file
+		SQLiteDatabase db = null;
+		Cursor cursor = null;
+		try {
+			EditText editAlt = (EditText)findViewById(R.id.EditTextAltitudeCorrection);
+			altitudeCorrectionMeters = Integer.parseInt(editAlt.getText().toString());
+			Log.i(tag, "altitude Correction updated to "+altitudeCorrectionMeters);
+			db = openOrCreateDatabase(GPSLoggerService.DATABASE_NAME, SQLiteDatabase.OPEN_READWRITE, null);
+			cursor = db.rawQuery("SELECT * " +
+                    " FROM " + GPSLoggerService.POINTS_TABLE_NAME +
+                    " ORDER BY GMTTIMESTAMP ASC",
+                    null);
+            int gmtTimestampColumnIndex = cursor.getColumnIndexOrThrow("GMTTIMESTAMP");
+            int latitudeColumnIndex = cursor.getColumnIndexOrThrow("LATITUDE");
+            int longitudeColumnIndex = cursor.getColumnIndexOrThrow("LONGITUDE");
+            int altitudeColumnIndex = cursor.getColumnIndexOrThrow("ALTITUDE");
+            int accuracyColumnIndex = cursor.getColumnIndexOrThrow("ACCURACY");
+			if (cursor.moveToFirst()) {
+				StringBuffer fileBuf = new StringBuffer();
+				String beginTimestamp = null;
+				String endTimestamp = null;
+				String gmtTimestamp = null;
+				initCsvFileBuf(fileBuf, initValuesMap());
+				do {
+					gmtTimestamp = cursor.getString(gmtTimestampColumnIndex);
+					if (beginTimestamp == null) {
+						beginTimestamp = gmtTimestamp;
+					}
+					double latitude = cursor.getDouble(latitudeColumnIndex);
+					double longitude = cursor.getDouble(longitudeColumnIndex);
+					double altitude = cursor.getDouble(altitudeColumnIndex) + altitudeCorrectionMeters;
+					double accuracy = cursor.getDouble(accuracyColumnIndex);
+					
+					fileBuf.append(zuluFormat(gmtTimestamp)+","+sevenSigDigits.format(longitude)+","+sevenSigDigits.format(latitude)+","+altitude+","+accuracy+"\n");
+				} while (cursor.moveToNext());
+				endTimestamp = gmtTimestamp;
+				closeCsvFileBuf(fileBuf, beginTimestamp, endTimestamp);
+				String fileContents = fileBuf.toString();
+				Log.d(tag, fileContents);
+				File sdDir = new File("/sdcard/GPSLogger");
+				sdDir.mkdirs();
+				File file = new File("/sdcard/GPSLogger/"+currentTripName+".csv");
+				FileWriter sdWriter = new FileWriter(file, false);
+				sdWriter.write(fileContents);
+				sdWriter.close();
+    			Toast.makeText(getBaseContext(),
+    					"Export completed!",
+    					Toast.LENGTH_LONG).show();
+			} else {
+				Toast.makeText(getBaseContext(),
+						"I didn't find any location points in the database, so no KML file was exported.",
+						Toast.LENGTH_LONG).show();
+			}
+		} catch (FileNotFoundException fnfe) {
+			Toast.makeText(getBaseContext(),
+					"Error trying access the SD card.  Make sure your handset is not connected to a computer and the SD card is properly installed",
+					Toast.LENGTH_LONG).show();
+		} catch (Exception e) {
+			Toast.makeText(getBaseContext(),
+					"Error trying to export: " + e.getMessage(),
+					Toast.LENGTH_LONG).show();
+		} finally {
+			if (cursor != null && !cursor.isClosed()) {
+				cursor.close();
+			}
+			if (db != null && db.isOpen()) {
+				db.close();
+			}
+		}
+	}
+	
+	
 	private HashMap initValuesMap() {
 		HashMap valuesMap = new HashMap();
 
@@ -309,6 +390,15 @@ public class GPSLoggerActivity extends Activity {
 		fileBuf.append("</kml>");
 	}
 
+	private void initCsvFileBuf(StringBuffer fileBuf, HashMap valuesMap) {
+		fileBuf.append("\"GMTTIMESTAMP\",\"LATITUDE\",\"LONGITUDE\",\"ALTITUDE\",\"ACCURACY\"\n"); 
+			}
+	
+	private void closeCsvFileBuf(StringBuffer fileBuf, String beginTimestamp, String endTimestamp) {
+		fileBuf.append("\n");
+	}
+	
+	
 	private String zuluFormat(String beginTimestamp) {
 		// turn 20081215135500 into 2008-12-15T13:55:00Z
 		StringBuffer buf = new StringBuffer(beginTimestamp);
